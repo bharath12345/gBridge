@@ -60,6 +60,22 @@ class Main {
             units    : "metricUnits",
             period   : "metricCollectionPeriod"
           }
+
+      - Poll gmond per the GCD
+      - Keep a counter per polling cycle
+      - Compare the counter with pollingCycles (which is polling-period divided by GCD)
+      - Whenever the counter matches, read value and publish on ZeroMQ
+      - Every cycle, update the pollingCycles as well (user might have changed the time to poll for a certain metric)
+      - If there is a change in the pollingCycles for a metric, then update it and publish the first value immediately
+
+      - Actor way of designing this?
+      - Separate Actors each for
+        * Polling gmond and pass on the XML - note, the TCP request/response should NOT block the actor but work in future
+        * Collect gmond xml, parse it and create json
+        * Publish json to zeromq
+        
+
+
     */
 
     val clusterXML = (xml \\ "CLUSTER").filter(attributeEquals("NAME", "unspecified"))
@@ -72,8 +88,11 @@ class Main {
     println("metric tuples = " + metricTuples)
 
     val periods: List[Int] = metricTuples.map(t => t._2).toList
-    val periodGCD = periods.foldLeft(0)((xxx, yyy) => gcd(xxx, yyy))
+    val periodGCD = periods.foldLeft(0)(gcd(_, _))
     println(s"gcd of periods = $periodGCD")
+
+    val pollingCycles = metricTuples.map(t => (t._1, t._2/periodGCD))
+    println(s"poll cycles = $pollingCycles")
 
     val metrics = metricTuples.map(t => t._1)
     for(m <- metrics) {
@@ -94,16 +113,14 @@ class Main {
 
       println(s"json = " + singleMetric)
     }
-
-
   }
-
 }
 
-object Main extends App {
+object Main extends App with Configuration {
 
   val m = new Main()
   m.work()
 
+  println(s"use file for gmond config = $useFile")
 
 }
