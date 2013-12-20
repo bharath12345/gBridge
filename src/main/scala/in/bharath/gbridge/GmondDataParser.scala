@@ -5,15 +5,17 @@ import scala.xml.{XML, Node}
 import akka.event.LoggingReceive
 import spray.json.{JsString, JsObject}
 import in.bharath.gbridge.JsonPublisher.JsonData
+import akka.event.slf4j.SLF4JLogging
+import in.bharath.gbridge.GmondPoller.PollingCycle
 
 /**
  * Created by bharadwaj on 20/12/13.
  */
 object GmondDataParser {
-  case class DataXml(lines: List[String])
+  case class DataXml(lines: List[String], pollCounter: Int, port: Int)
 }
 
-class GmondDataParser extends Actor {
+class GmondDataParser extends Actor with SLF4JLogging {
   import GmondDataParser._
 
   def attributeEquals(name: String, value: String)(node: Node) = {
@@ -22,20 +24,18 @@ class GmondDataParser extends Actor {
 
   def gcd(a: Int, b: Int): Int = if (b == 0) a.abs else gcd(b, a % b)
 
-  def lcm(a: Int, b: Int) = (a * b).abs / gcd(a, b)
-
   val jsonPublisher = context.actorOf(Props[JsonPublisher], name = "JsonPublisher")
 
   def receive = LoggingReceive {
 
-    case DataXml(lines) => {
+    case DataXml(lines, pollCounter, port) => {
 
       val relevant = lines.dropWhile(line => line.contains("<GANGLIA_XML") == false)
 
-      //for(line <- relevant) println(s"line ==> $line")
+      //for(line <- relevant) log.debug(s"line ==> $line")
 
       val singleBlob = relevant.flatten.mkString
-      //println(singleBlob)
+      //log.debug(singleBlob)
 
       val xml = XML.loadString(singleBlob)
 
@@ -76,25 +76,25 @@ class GmondDataParser extends Actor {
       */
 
       val clusterXML = (xml \\ "CLUSTER").filter(attributeEquals("NAME", "unspecified"))
-      //println(s"cluster = $clusterXML")
+      //log.debug(s"cluster = $clusterXML")
 
       val nodeXML = (clusterXML \\ "HOST").filter(attributeEquals("NAME", "192.168.1.113")) //192.168.1.113 or 10.50.1.235
-      //println(s"node = $nodeXML")
+      //log.debug(s"node = $nodeXML")
 
       val metricTuples = (nodeXML \ "METRIC").map(x => ((x \ "@NAME").text, (x \ "@TMAX").text.toInt))
-      println("metric tuples = " + metricTuples)
+      log.debug("metric tuples = " + metricTuples)
 
       val periods: List[Int] = metricTuples.map(t => t._2).toList
       val periodGCD = periods.foldLeft(0)(gcd(_, _))
-      println(s"gcd of periods = $periodGCD")
+      log.debug(s"gcd of periods = $periodGCD")
 
       val pollingCycles = metricTuples.map(t => (t._1, t._2 / periodGCD))
-      println(s"poll cycles = $pollingCycles")
+      log.debug(s"poll cycles = $pollingCycles")
 
       val metrics = metricTuples.map(t => t._1)
       for (m <- metrics) {
         val metricXML = (nodeXML \ "METRIC").filter(attributeEquals("NAME", m))
-        //println(s"metric values = " + metricValue)
+        //log.debug(s"metric values = " + metricValue)
 
         val singleMetric = JsObject(
           "cluster" -> JsString("unspecified"),
@@ -108,9 +108,13 @@ class GmondDataParser extends Actor {
           "period" -> JsString((metricXML \ "@TMAX").text)
         )
 
-        println(s"json = " + singleMetric)
+        log.debug(s"json = " + singleMetric)
 
         jsonPublisher ! JsonData(singleMetric)
+
+        sender ! PollingCycle("unspecified", "localhost", pollingCycles, pollCounter + 1, port)
+
+
       }
     }
   }

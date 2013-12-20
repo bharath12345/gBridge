@@ -1,16 +1,12 @@
 package in.bharath.gbridge
 
-import spray.json._
-import java.net.{Socket, InetAddress}
-import scala.io._
-import scala.xml.{XML, Node}
-import akka.actor.{Actor, Props, ActorSystem}
-import akka.event.LoggingReceive
+import akka.actor.{Props, ActorSystem}
+import akka.event.slf4j.SLF4JLogging
 
 /**
  * Created by bharadwaj on 19/12/13.
  */
-object Main extends App with Configuration {
+object Main extends App with Configuration with SLF4JLogging {
   import GmondPoller._
 
   // Create an Akka system
@@ -21,7 +17,7 @@ object Main extends App with Configuration {
 
   // ToDo: Read the list of gmond's host/port to poll from an external source
 
-  println(s"use file for gmond config = $useFile")
+  log.debug(s"use file for gmond config = $useFile")
 
-  gmondPoller ! PollRequest("localhost", 8649)
+  gmondPoller ! PollRequest("localhost", 8649, 0)
 }

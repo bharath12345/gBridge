@@ -12,6 +12,7 @@ libraryDependencies ++= {
     "io.spray"          %% "spray-json"      % "1.2.5",
     "com.typesafe.akka" %% "akka-actor"      % akkaV,
     "com.typesafe.akka" %% "akka-testkit"    % akkaV,
-    "com.typesafe.akka" %% "akka-slf4j"      % akkaV
+    "com.typesafe.akka" %% "akka-slf4j"      % akkaV,
+    "ch.qos.logback"    %  "logback-classic" % "1.0.13"
   )
 }
