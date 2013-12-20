@@ -1,5 +1,6 @@
 package in.bharath.gbridge
 
+import spray.json._
 import java.net.{Socket, InetAddress}
 import scala.io._
 import scala.xml.{XML, Node}
@@ -10,8 +11,11 @@ import scala.xml.{XML, Node}
 class Main {
 
   def attributeEquals(name: String, value: String)(node: Node) = {
-    node.attribute(name).exists(name => name.text == value)
+    node.attribute(name).exists(n => n.text == value)
   }
+
+  def gcd(a: Int, b: Int):Int=if (b==0) a.abs else gcd(b, a%b)
+  def lcm(a: Int, b: Int)=(a*b).abs/gcd(a,b)
 
   def work() = {
 
@@ -19,10 +23,13 @@ class Main {
 
     val adr = InetAddress.getByName("localhost")
     val socket = new Socket(adr, 8649)
-
     val s = Source.fromInputStream(socket.getInputStream())
 
     val lines = (for (line <- s.getLines()) yield line).toList
+
+    socket.close()
+    s.close()
+
     val relevant = lines.dropWhile(line => line.contains("<GANGLIA_XML") == false)
 
     //for(line <- relevant) println(s"line ==> $line")
@@ -38,7 +45,7 @@ class Main {
      However one info that will have to be maintained is the polling interval of different metrics per node per cluster
        Use the polling interval value to filter out all other cluster/nodes when u get the response
      One problem - not all polling intervals will be in multiples...
-       one way to tackle this problem is to find the LCD of all the polling intervals and poll gmond per the LCM
+       one way to tackle this problem is to find the GCD of all the polling intervals and poll gmond per the GCD
        but the shortcoming of this approach is that, doing this, gmond will be polled too frequently
 
      The JSON to be published on the ZeroMQ bus is a stub of the following structure -
@@ -55,14 +62,40 @@ class Main {
           }
     */
 
+    val clusterXML = (xml \\ "CLUSTER").filter(attributeEquals("NAME", "unspecified"))
+    //println(s"cluster = $clusterXML")
 
-    //val testResults = xml \\ "CLUSTER" filter attributeEquals("NAME","unspecified")
+    val nodeXML = (clusterXML \\ "HOST").filter(attributeEquals("NAME", "192.168.1.113")) //192.168.1.113 or 10.50.1.235
+    //println(s"node = $nodeXML")
 
-    //val testResults = (xml \\ "CLUSTER").filter(node => node.attribute("NAME").exists(name => name.text == "unspecified"))
+    val metricTuples = (nodeXML \ "METRIC").map(x => ((x \ "@NAME").text, (x \ "@TMAX").text.toInt))
+    println("metric tuples = " + metricTuples)
 
-    val testResults = (xml \\ "CLUSTER").filter(attributeEquals("NAME", "unspecified"))
+    val periods: List[Int] = metricTuples.map(t => t._2).toList
+    val periodGCD = periods.foldLeft(0)((xxx, yyy) => gcd(xxx, yyy))
+    println(s"gcd of periods = $periodGCD")
 
-    println(s"test results = $testResults")
+    val metrics = metricTuples.map(t => t._1)
+    for(m <- metrics) {
+      val metricXML = (nodeXML \ "METRIC").filter(attributeEquals("NAME", m))
+      //println(s"metric values = " + metricValue)
+
+      val singleMetric = JsObject(
+        "cluster"  -> JsString("unspecified"),
+        "host"     -> JsString("localhost"),
+        "ip"       -> JsString("192.168.1.113"),
+        "instance" -> JsString(""),
+        "metric"   -> JsString(m),
+        "value"    -> JsString((metricXML \ "@VAL").text),
+        "type"     -> JsString((metricXML \ "@TYPE").text),
+        "units"    -> JsString((metricXML \ "@UNITS").text),
+        "period"   -> JsString((metricXML \ "@TMAX").text)
+      )
+
+      println(s"json = " + singleMetric)
+    }
+
+
   }
 
 }
