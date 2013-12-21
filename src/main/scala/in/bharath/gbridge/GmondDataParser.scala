@@ -1,12 +1,14 @@
 package in.bharath.gbridge
 
-import akka.actor.{Props, Actor}
+import akka.actor.{ActorSystem, Props, Actor}
 import scala.xml.{XML, Node}
 import akka.event.LoggingReceive
 import spray.json.{JsString, JsObject}
 import in.bharath.gbridge.JsonPublisher.JsonData
 import akka.event.slf4j.SLF4JLogging
 import in.bharath.gbridge.GmondPoller.PollingCycle
+import scala.concurrent.duration._
+import scala.concurrent.ExecutionContext
 
 /**
  * Created by bharadwaj on 20/12/13.
@@ -18,9 +20,11 @@ object GmondDataParser {
 class GmondDataParser extends Actor with SLF4JLogging {
   import GmondDataParser._
 
-  def attributeEquals(name: String, value: String)(node: Node) = {
-    node.attribute(name).exists(n => n.text == value)
-  }
+  import ExecutionContext.Implicits.global
+
+  val system = ActorSystem("GmondDataParser")
+
+  def attributeEquals(name: String, value: String)(node: Node) = node.attribute(name).exists(n => n.text == value)
 
   def gcd(a: Int, b: Int): Int = if (b == 0) a.abs else gcd(b, a % b)
 
@@ -92,8 +96,13 @@ class GmondDataParser extends Actor with SLF4JLogging {
       val pollingCycles = metricTuples.map(t => (t._1, t._2 / periodGCD))
       log.debug(s"poll cycles = $pollingCycles")
 
-      val metrics = metricTuples.map(t => t._1)
-      for (m <- metrics) {
+      // This for loop will publish Json only when the polling cycle of a metric satisfies.
+      // In the very first iteration, the pollCounter will be 0, and thus all the metrics will be published
+      for {
+        p <- pollingCycles
+        m = p._1
+        if(pollCounter % pollingCycles.filter(x => x._1 == m)(0)._2 == 0)
+      } {
         val metricXML = (nodeXML \ "METRIC").filter(attributeEquals("NAME", m))
         //log.debug(s"metric values = " + metricValue)
 
@@ -111,10 +120,16 @@ class GmondDataParser extends Actor with SLF4JLogging {
 
         log.debug(s"json = " + singleMetric)
 
-        jsonPublisher ! JsonData(singleMetric)
+        // ToDo: Send this JSON onwards to ZeroMQ
+        //jsonPublisher ! JsonData(singleMetric)
+      }
 
+      /*
+        This iteration of poll is complete. Notify back the GmondPoller so that it schedules the next poll
+        of this instance... but only after sleep waiting for GCD seconds
+       */
+      system.scheduler.scheduleOnce(periodGCD.seconds) {
         sender ! PollingCycle("unspecified", "localhost", pollingCycles, pollCounter + 1, port)
-
       }
     }
   }
