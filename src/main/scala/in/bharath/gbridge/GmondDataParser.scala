@@ -78,7 +78,8 @@ class GmondDataParser extends Actor with SLF4JLogging {
       val clusterXML = (xml \\ "CLUSTER").filter(attributeEquals("NAME", "unspecified"))
       //log.debug(s"cluster = $clusterXML")
 
-      val nodeXML = (clusterXML \\ "HOST").filter(attributeEquals("NAME", "192.168.1.113")) //192.168.1.113 or 10.50.1.235
+      val nodeXML = (clusterXML \\ "HOST").filter(attributeEquals("NAME", "192.168.1.5"))
+      //192.168.1.113 or 10.50.1.235 or 192.168.1.5
       //log.debug(s"node = $nodeXML")
 
       val metricTuples = (nodeXML \ "METRIC").map(x => ((x \ "@NAME").text, (x \ "@TMAX").text.toInt))
@@ -113,7 +114,6 @@ class GmondDataParser extends Actor with SLF4JLogging {
         jsonPublisher ! JsonData(singleMetric)
 
         sender ! PollingCycle("unspecified", "localhost", pollingCycles, pollCounter + 1, port)
-
 
       }
     }
