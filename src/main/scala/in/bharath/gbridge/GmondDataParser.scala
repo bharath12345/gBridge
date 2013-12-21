@@ -19,10 +19,7 @@ object GmondDataParser {
 
 class GmondDataParser extends Actor with SLF4JLogging {
   import GmondDataParser._
-
   import ExecutionContext.Implicits.global
-
-  val system = ActorSystem("GmondDataParser")
 
   def attributeEquals(name: String, value: String)(node: Node) = node.attribute(name).exists(n => n.text == value)
 
@@ -124,12 +121,14 @@ class GmondDataParser extends Actor with SLF4JLogging {
         //jsonPublisher ! JsonData(singleMetric)
       }
 
+      val gmondPollerReference = sender
+
       /*
         This iteration of poll is complete. Notify back the GmondPoller so that it schedules the next poll
         of this instance... but only after sleep waiting for GCD seconds
        */
-      system.scheduler.scheduleOnce(periodGCD.seconds) {
-        sender ! PollingCycle("unspecified", "localhost", pollingCycles, pollCounter + 1, port)
+      context.system.scheduler.scheduleOnce(periodGCD.seconds) {
+        gmondPollerReference ! PollingCycle("unspecified", "localhost", pollingCycles, pollCounter + 1, port)
       }
     }
   }
