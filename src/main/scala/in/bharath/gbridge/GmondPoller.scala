@@ -11,40 +11,31 @@ import scala.concurrent._
  * Created by bharadwaj on 20/12/13.
  */
 object GmondPoller {
-
-  case class PollRequest(host: String, port: Int, pollCounter: Int)
-
-  case class PollingCycle(cluster: String, host: String, tupleList: Seq[(String, Int)], pollCounter: Int, port: Int)
-
+  case class PollRequest(pollCounter: Long)
 }
 
-class GmondPoller extends Actor with SLF4JLogging {
+class GmondPoller(clusterName: String, hostIP: String, hostName: String, port: Int) extends Actor with SLF4JLogging {
 
   import GmondPoller._
   import GmondDataParser._
   import ExecutionContext.Implicits.global
 
-  val gmondDataParser = context.actorOf(Props[GmondDataParser], name = "GmondDataParser")
+  val gmondDataParser = context.actorOf(Props(new GmondDataParser(clusterName, hostIP, hostName, port)), name = "GmondDataParser")
 
   def receive = LoggingReceive {
-    case PollRequest(host, port, pollCounter) =>  {
+    case PollRequest(pollCounter) =>  {
 
-      val adr = InetAddress.getByName(host)
+      val adr = InetAddress.getByName(hostIP)
       val socket = new Socket(adr, port)
-
-      log.debug("received poll request for host = " + host)
-      //val commander = sender
+      log.debug(s"poll request for [clusterName = $clusterName] [hostName = $hostName] [hostIP = $hostIP] " +
+        s"[port = $port] [poll counter = $pollCounter]")
 
       future {
-        Thread.sleep(3000)
-        log.debug("going to poll host = " + host)
-
-        // ToDo: this is a blocking receive - ELIMINATE it or else it will bring down the performance of this whole actor
+        //Thread.sleep(3000)
+        //log.debug(s"going to poll hostIP = $hostIP")
 
         val s = Source.fromInputStream(socket.getInputStream())
-
         val lines = (for (line <- s.getLines()) yield line).toList
-
         socket.close()
         s.close()
 
@@ -52,19 +43,9 @@ class GmondPoller extends Actor with SLF4JLogging {
 
       } onSuccess {
         case lines => {
-          //log.debug("x = " + x)
-          gmondDataParser ! DataXml(lines, pollCounter, port)
+          gmondDataParser ! DataXml(pollCounter, lines)
         }
       }
-    }
-
-    case PollingCycle(cluster, host, tupleList, pollCounter, port) => {
-      // use the tupleList to send a message to self for the next polling
-
-      log.debug("received polling request")
-
-      // ToDo: This is the dangerous scale
-      //self ! PollRequest(host, port, pollCounter)
     }
   }
 }

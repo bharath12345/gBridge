@@ -15,6 +15,8 @@ trait Configuration {
    */
   val config = ConfigFactory.load()
 
-  lazy val useFile = Try(config.getString("gbridge.useFile")).getOrElse(false)
+  lazy val useFile: Boolean = Try(config.getBoolean("gbridge.useFile")).getOrElse(false)
+
+  lazy val clusterConfig: String = Try(config.getString("gbridge.clusterConfig")).getOrElse("/tmp/clusterConfig.json")
 
 }

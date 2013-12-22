@@ -1,12 +1,10 @@
 package in.bharath.gbridge
 
-import akka.actor.{ActorSystem, Props, Actor}
+import akka.actor.{Props, Actor}
 import scala.xml.{XML, Node}
 import akka.event.LoggingReceive
 import spray.json.{JsString, JsObject}
-import in.bharath.gbridge.JsonPublisher.JsonData
 import akka.event.slf4j.SLF4JLogging
-import in.bharath.gbridge.GmondPoller.PollingCycle
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext
 
@@ -14,12 +12,14 @@ import scala.concurrent.ExecutionContext
  * Created by bharadwaj on 20/12/13.
  */
 object GmondDataParser {
-  case class DataXml(lines: List[String], pollCounter: Int, port: Int)
+  case class DataXml(pollCounter: Long, lines: List[String])
 }
 
-class GmondDataParser extends Actor with SLF4JLogging {
+class GmondDataParser(clusterName: String, hostIP: String, hostName: String, port: Int) extends Actor with SLF4JLogging {
   import GmondDataParser._
   import ExecutionContext.Implicits.global
+  import in.bharath.gbridge.GmondPoller.{PollRequest}
+  import in.bharath.gbridge.JsonPublisher.JsonData
 
   def attributeEquals(name: String, value: String)(node: Node) = node.attribute(name).exists(n => n.text == value)
 
@@ -29,10 +29,9 @@ class GmondDataParser extends Actor with SLF4JLogging {
 
   def receive = LoggingReceive {
 
-    case DataXml(lines, pollCounter, port) => {
+    case DataXml(pollCounter, lines) => {
 
       val relevant = lines.dropWhile(line => line.contains("<GANGLIA_XML") == false)
-
       //for(line <- relevant) log.debug(s"line ==> $line")
 
       val singleBlob = relevant.flatten.mkString
@@ -52,7 +51,7 @@ class GmondDataParser extends Actor with SLF4JLogging {
        The JSON to be published on the ZeroMQ bus is a stub of the following structure -
             {
               cluster  : "clusterName",
-              host     : "hostName",
+              hostIP     : "hostName",
               ip       : "hostIP",
               instance : "instanceIdentifier",  => This field is useful when there are multiple metrics of the same type on a system
               metric   : "metricName",
@@ -76,22 +75,25 @@ class GmondDataParser extends Actor with SLF4JLogging {
           * Publish json to zeromq
       */
 
-      val clusterXML = (xml \\ "CLUSTER").filter(attributeEquals("NAME", "unspecified"))
+      val clusterXML = (xml \\ "CLUSTER").filter(attributeEquals("NAME", clusterName))
       //log.debug(s"cluster = $clusterXML")
 
-      val nodeXML = (clusterXML \\ "HOST").filter(attributeEquals("NAME", "192.168.1.5"))
+      val nodeXML = (clusterXML \\ "HOST").filter(attributeEquals("IP", hostName))
       //192.168.1.113 or 10.50.1.235 or 192.168.1.5
       //log.debug(s"node = $nodeXML")
 
+      //val clusterName = (clusterXML \ "@NAME").text
+      //val hostName = (nodeXML \ "@NAME").text
+
       val metricTuples = (nodeXML \ "METRIC").map(x => ((x \ "@NAME").text, (x \ "@TMAX").text.toInt))
-      log.debug("metric tuples = " + metricTuples)
+      //log.debug("metric tuples = " + metricTuples)
 
       val periods: List[Int] = metricTuples.map(t => t._2).toList
       val periodGCD = periods.foldLeft(0)(gcd(_, _))
-      log.debug(s"gcd of periods = $periodGCD")
+      if(pollCounter == 0) log.debug(s"gcd of periods = $periodGCD")
 
       val pollingCycles = metricTuples.map(t => (t._1, t._2 / periodGCD))
-      log.debug(s"poll cycles = $pollingCycles")
+      if(pollCounter == 0) log.debug(s"poll cycles = $pollingCycles")
 
       // This for loop will publish Json only when the polling cycle of a metric satisfies.
       // In the very first iteration, the pollCounter will be 0, and thus all the metrics will be published
@@ -104,9 +106,9 @@ class GmondDataParser extends Actor with SLF4JLogging {
         //log.debug(s"metric values = " + metricValue)
 
         val singleMetric = JsObject(
-          "cluster" -> JsString("unspecified"),
-          "host" -> JsString("localhost"),
-          "ip" -> JsString("192.168.1.113"),
+          "cluster" -> JsString(clusterName),
+          "host" -> JsString(hostName),
+          "ip" -> JsString(hostIP),
           "instance" -> JsString(""),
           "metric" -> JsString(m),
           "value" -> JsString((metricXML \ "@VAL").text),
@@ -117,7 +119,7 @@ class GmondDataParser extends Actor with SLF4JLogging {
 
         log.debug(s"json = " + singleMetric)
 
-        // ToDo: Send this JSON onwards to ZeroMQ
+        // Send this JSON onwards to ZeroMQ
         //jsonPublisher ! JsonData(singleMetric)
       }
 
@@ -128,7 +130,7 @@ class GmondDataParser extends Actor with SLF4JLogging {
         of this instance... but only after sleep waiting for GCD seconds
        */
       context.system.scheduler.scheduleOnce(periodGCD.seconds) {
-        gmondPollerReference ! PollingCycle("unspecified", "localhost", pollingCycles, pollCounter + 1, port)
+        gmondPollerReference ! PollRequest(pollCounter + 1)
       }
     }
   }

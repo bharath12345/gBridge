@@ -2,46 +2,61 @@ package in.bharath.gbridge
 
 import akka.actor.{Props, ActorSystem}
 import akka.event.slf4j.SLF4JLogging
-import akka.pattern.{ask, pipe}
-import in.bharath.gbridge.GmondDataParser.DataXml
-import akka.util.Timeout
-import scala.concurrent.duration._
-import scala.concurrent.ExecutionContext
-import ExecutionContext.Implicits.global
+import spray.json._
+import spray.json.DefaultJsonProtocol._
 
 /**
  * Created by bharadwaj on 19/12/13.
  */
 object Main extends App with Configuration with SLF4JLogging {
+
   import GmondPoller._
 
-  implicit val timeout = Timeout(5.seconds)
+  case class HostInfo(hostIP: String, hostName: String, port: Int)
+  case class ClusterInfo(clusterName: String, hostInfo: List[HostInfo])
+  case class GangliaInfo(gangliaConf: List[ClusterInfo])
+
+  object GBridgeJsonProtocol extends DefaultJsonProtocol {
+    implicit val hostInfo = jsonFormat3(HostInfo)
+    implicit val clusterInfo = jsonFormat2(ClusterInfo)
+  }
+
+  import GBridgeJsonProtocol._
+
+  implicit object GangliaInfoFormat extends RootJsonFormat[GangliaInfo] {
+    def write(b: GangliaInfo) = JsObject()
+    def read(value: JsValue) = GangliaInfo(value.convertTo[List[ClusterInfo]])
+  }
 
   // Create an Akka system
   val system = ActorSystem("gBridgeSystem")
 
   // create the result listener, which will print the result and shutdown the system
-  val gmondPoller = system.actorOf(Props[GmondPoller], name = "GmondPoller")
-  //val gmondDataParser = system.actorOf(Props[GmondDataParser], name = "GmondDataParser")
+  val gmondPoller = system.actorOf(Props(new GmondPoller("unspecified", "localhost", "192.168.1.5", 8649)), name = "GmondPoller")
 
   // ToDo: Read the list of gmond's host/port to poll from an external source
-  log.debug(s"use file for gmond config = $useFile")
+  if (useFile) log.debug(s"using gmond config file = $clusterConfig")
+  else         log.debug("not using gmond config file")
+
+  if(useFile) {
+    val source = scala.io.Source.fromFile(clusterConfig)
+    val lines: String = source.mkString
+    source.close()
+
+    println("json config = " + lines)
+    val jsonAst = lines.asJson
+    val config: GangliaInfo = jsonAst.convertTo[GangliaInfo]
+    println("the json object = " + config.toString)
+
+  }
 
   /*
-   Send the request to GmondPoller Actor => The return will be a Future.
-   So, the return will come, whenever it will come. The actor's is NOT blocked consuming a resource like a thread.
+   Send the request to GmondPoller Actor => The reading data from gmond socket happens in a future.
+   So, the actor is NOT blocked consuming a resource like a thread.
    Not consuming resources like threads is what makes asynchronous programming useful.
    In this case the, the ExecutionContext takes care of waking up the future when the response is ready, creating the
    dormant objects in its context and using one of its threads. It frees up threading resources for other compute
    intensive tasks - no computing resource like thred is ever blocked.
   */
-  (gmondPoller ? PollRequest("localhost", 8649, 0))//.mapTo[DataXml]) pipeTo gmondDataParser
-
-  (gmondPoller ? PollRequest("localhost", 8649, 0))//.mapTo[DataXml]) pipeTo gmondDataParser
-
-  (gmondPoller ? PollRequest("localhost", 8649, 0))//.mapTo[DataXml]) pipeTo gmondDataParser
-
-  (gmondPoller ? PollRequest("localhost", 8649, 0))//.mapTo[DataXml]) pipeTo gmondDataParser
-
-
+  gmondPoller ! PollRequest(0L)
 }

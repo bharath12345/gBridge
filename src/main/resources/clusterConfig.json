@@ -1,0 +1,22 @@
+[
+    {
+      "clusterName": "unspecified",
+      "hostInfo": [
+        {
+          "hostIP": "192.168.1.5",
+          "hostName": "localhost",
+          "port": 8649
+        },
+        {
+          "hostIP": "10.50.1.235",
+          "hostName": "localhost",
+          "port": 8649
+        },
+        {
+          "hostIP": "192.168.1.113",
+          "hostName": "localhost",
+          "port": 8649
+        }
+      ]
+    }
+  ]
