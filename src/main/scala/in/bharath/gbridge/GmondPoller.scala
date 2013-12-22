@@ -20,12 +20,16 @@ class GmondPoller(clusterName: String, hostIP: String, hostName: String, port: I
   import GmondDataParser._
   import ExecutionContext.Implicits.global
 
-  val gmondDataParser = context.actorOf(Props(new GmondDataParser(clusterName, hostIP, hostName, port)), name = "GmondDataParser")
+  val parserName = new StringBuilder("GmondParser_").append(clusterName).append("_").
+    append(hostName).append("_").
+    append(hostIP).append("_").append(port).toString()
+
+  val gmondDataParser = context.actorOf(Props(new GmondDataParser(clusterName, hostIP, hostName, port)), name = parserName)
 
   def receive = LoggingReceive {
     case PollRequest(pollCounter) =>  {
 
-      val adr = InetAddress.getByName(hostIP)
+      val adr = InetAddress.getByName(hostName)
       val socket = new Socket(adr, port)
       log.debug(s"poll request for [clusterName = $clusterName] [hostName = $hostName] [hostIP = $hostIP] " +
         s"[port = $port] [poll counter = $pollCounter]")
@@ -43,7 +47,8 @@ class GmondPoller(clusterName: String, hostIP: String, hostName: String, port: I
 
       } onSuccess {
         case lines => {
-          gmondDataParser ! DataXml(pollCounter, lines)
+          //println("lines size = " + lines.size)
+          if(lines.size > 0) gmondDataParser ! DataXml(pollCounter, lines)
         }
       }
     }

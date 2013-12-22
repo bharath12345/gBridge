@@ -31,9 +31,6 @@ object Main extends App with Configuration with SLF4JLogging {
   // Create an Akka system
   val system = ActorSystem("gBridgeSystem")
 
-  // create the result listener, which will print the result and shutdown the system
-  val gmondPoller = system.actorOf(Props(new GmondPoller("unspecified", "localhost", "192.168.1.5", 8649)), name = "GmondPoller")
-
   // ToDo: Read the list of gmond's host/port to poll from an external source
   if (useFile) log.debug(s"using gmond config file = $clusterConfig")
   else         log.debug("not using gmond config file")
@@ -43,20 +40,33 @@ object Main extends App with Configuration with SLF4JLogging {
     val lines: String = source.mkString
     source.close()
 
-    println("json config = " + lines)
+    //println("json config = " + lines)
     val jsonAst = lines.asJson
     val config: GangliaInfo = jsonAst.convertTo[GangliaInfo]
     println("the json object = " + config.toString)
 
-  }
+    for {
+      ci <- config.gangliaConf
+      hi <- ci.hostInfo
+    } {
 
-  /*
-   Send the request to GmondPoller Actor => The reading data from gmond socket happens in a future.
-   So, the actor is NOT blocked consuming a resource like a thread.
-   Not consuming resources like threads is what makes asynchronous programming useful.
-   In this case the, the ExecutionContext takes care of waking up the future when the response is ready, creating the
-   dormant objects in its context and using one of its threads. It frees up threading resources for other compute
-   intensive tasks - no computing resource like thred is ever blocked.
-  */
-  gmondPoller ! PollRequest(0L)
+      val pollerName = new StringBuilder("GmondPoller_").append(ci.clusterName).append("_").
+        append(hi.hostName).append("_").
+        append(hi.hostIP).append("_").append(hi.port).toString()
+
+      //println(s"poller name = " + pollerName)
+      // create the result listener, which will print the result and shutdown the system
+      val gmondPoller = system.actorOf(Props(new GmondPoller(ci.clusterName, hi.hostIP, hi.hostName, hi.port)), name = pollerName)
+
+      /*
+       Send the request to GmondPoller Actor => The reading data from gmond socket happens in a future.
+       So, the actor is NOT blocked consuming a resource like a thread.
+       Not consuming resources like threads is what makes asynchronous programming useful.
+       In this case the, the ExecutionContext takes care of waking up the future when the response is ready, creating the
+       dormant objects in its context and using one of its threads. It frees up threading resources for other compute
+       intensive tasks - no computing resource like thred is ever blocked.
+      */
+      gmondPoller ! PollRequest(0L)
+    }
+  }
 }

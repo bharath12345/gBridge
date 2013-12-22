@@ -12,10 +12,13 @@ import scala.concurrent.ExecutionContext
  * Created by bharadwaj on 20/12/13.
  */
 object GmondDataParser {
+
   case class DataXml(pollCounter: Long, lines: List[String])
+
 }
 
 class GmondDataParser(clusterName: String, hostIP: String, hostName: String, port: Int) extends Actor with SLF4JLogging {
+
   import GmondDataParser._
   import ExecutionContext.Implicits.global
   import in.bharath.gbridge.GmondPoller.{PollRequest}
@@ -78,59 +81,57 @@ class GmondDataParser(clusterName: String, hostIP: String, hostName: String, por
       val clusterXML = (xml \\ "CLUSTER").filter(attributeEquals("NAME", clusterName))
       //log.debug(s"cluster = $clusterXML")
 
-      val nodeXML = (clusterXML \\ "HOST").filter(attributeEquals("IP", hostName))
-      //192.168.1.113 or 10.50.1.235 or 192.168.1.5
-      //log.debug(s"node = $nodeXML")
+      val nodeXML = (clusterXML \\ "HOST").filter(attributeEquals("IP", hostIP))
+      //log.debug(s"node = $nodeXML and size = " + nodeXML.size)
+      if (nodeXML.size > 0) {
 
-      //val clusterName = (clusterXML \ "@NAME").text
-      //val hostName = (nodeXML \ "@NAME").text
+        val metricTuples = (nodeXML \ "METRIC").map(x => ((x \ "@NAME").text, (x \ "@TMAX").text.toInt))
+        //log.debug("metric tuples = " + metricTuples)
 
-      val metricTuples = (nodeXML \ "METRIC").map(x => ((x \ "@NAME").text, (x \ "@TMAX").text.toInt))
-      //log.debug("metric tuples = " + metricTuples)
+        val periods: List[Int] = metricTuples.map(t => t._2).toList
+        val periodGCD = periods.foldLeft(0)(gcd(_, _)).max(5) // ToDo: This minimum 5 seconds is madness... need to find a better algo here
+        if (pollCounter == 0) log.debug(s"gcd of periods = $periodGCD")
 
-      val periods: List[Int] = metricTuples.map(t => t._2).toList
-      val periodGCD = periods.foldLeft(0)(gcd(_, _))
-      if(pollCounter == 0) log.debug(s"gcd of periods = $periodGCD")
+        val pollingCycles = metricTuples.map(t => (t._1, t._2 / periodGCD))
+        if (pollCounter == 0) log.debug(s"poll cycles = $pollingCycles")
 
-      val pollingCycles = metricTuples.map(t => (t._1, t._2 / periodGCD))
-      if(pollCounter == 0) log.debug(s"poll cycles = $pollingCycles")
+        // This for loop will publish Json only when the polling cycle of a metric satisfies.
+        // In the very first iteration, the pollCounter will be 0, and thus all the metrics will be published
+        for {
+          p <- pollingCycles
+          m = p._1
+          if (pollCounter % pollingCycles.filter(x => x._1 == m)(0)._2 == 0)
+        } {
+          val metricXML = (nodeXML \ "METRIC").filter(attributeEquals("NAME", m))
+          //log.debug(s"metric values = " + metricXML)
 
-      // This for loop will publish Json only when the polling cycle of a metric satisfies.
-      // In the very first iteration, the pollCounter will be 0, and thus all the metrics will be published
-      for {
-        p <- pollingCycles
-        m = p._1
-        if(pollCounter % pollingCycles.filter(x => x._1 == m)(0)._2 == 0)
-      } {
-        val metricXML = (nodeXML \ "METRIC").filter(attributeEquals("NAME", m))
-        //log.debug(s"metric values = " + metricValue)
+          val singleMetric = JsObject(
+            "cluster" -> JsString(clusterName),
+            "host" -> JsString(hostName),
+            "ip" -> JsString(hostIP),
+            "instance" -> JsString(""),
+            "metric" -> JsString(m),
+            "value" -> JsString((metricXML \ "@VAL").text),
+            "type" -> JsString((metricXML \ "@TYPE").text),
+            "units" -> JsString((metricXML \ "@UNITS").text),
+            "period" -> JsString((metricXML \ "@TMAX").text)
+          )
 
-        val singleMetric = JsObject(
-          "cluster" -> JsString(clusterName),
-          "host" -> JsString(hostName),
-          "ip" -> JsString(hostIP),
-          "instance" -> JsString(""),
-          "metric" -> JsString(m),
-          "value" -> JsString((metricXML \ "@VAL").text),
-          "type" -> JsString((metricXML \ "@TYPE").text),
-          "units" -> JsString((metricXML \ "@UNITS").text),
-          "period" -> JsString((metricXML \ "@TMAX").text)
-        )
+          log.debug(s"json = " + singleMetric)
 
-        log.debug(s"json = " + singleMetric)
+          // Send this JSON onwards to ZeroMQ
+          //jsonPublisher ! JsonData(singleMetric)
+        }
 
-        // Send this JSON onwards to ZeroMQ
-        //jsonPublisher ! JsonData(singleMetric)
-      }
+        val gmondPollerReference = sender
 
-      val gmondPollerReference = sender
-
-      /*
-        This iteration of poll is complete. Notify back the GmondPoller so that it schedules the next poll
-        of this instance... but only after sleep waiting for GCD seconds
-       */
-      context.system.scheduler.scheduleOnce(periodGCD.seconds) {
-        gmondPollerReference ! PollRequest(pollCounter + 1)
+        /*
+          This iteration of poll is complete. Notify back the GmondPoller so that it schedules the next poll
+          of this instance... but only after sleep waiting for GCD seconds
+         */
+        context.system.scheduler.scheduleOnce(periodGCD.seconds) {
+          gmondPollerReference ! PollRequest(pollCounter + 1)
+        }
       }
     }
   }
